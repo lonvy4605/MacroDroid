@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>
+:root{--bg:#09080F;--card:#151320;--bd:#262238;--ac:#8B5CF6;--tx:#F3F4F6;--sub:#9CA3AF;--ok:#10B981;--bad:#EF4444}
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--tx);padding:18px 16px 48px}
+h1{font-size:22px;font-weight:800;color:#DDD6FE}
+.sub{font-size:12.5px;color:var(--sub);margin:4px 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:14px;margin-bottom:12px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:99px;background:#1B1829;border:1px solid var(--bd)}
+.chip.ok{color:var(--ok);border-color:#0b6b4c}
+.chip.bad{color:var(--bad);border-color:#7f1d1d}
+.row{display:flex;gap:8px;margin-top:10px}
+button{flex:1;padding:12px;border:none;border-radius:12px;background:#262238;color:#fff;font-weight:700;font-size:13px}
+button.ac{background:var(--ac)}
+button.bad{background:#7f1d1d}
+.item{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--bd);border-radius:12px;margin-bottom:8px;background:#100E19}
+.item.sel{border-color:var(--ac)}
+.item .nm{flex:1;font-size:13.5px;font-weight:700;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tag{font-size:10.5px;font-weight:800;color:var(--ok)}
+.tag.m{color:#C4B5FD}
+input,textarea{width:100%;background:#0D0B14;border:1px solid var(--bd);color:#fff;padding:10px 12px;border-radius:10px;font-size:13px;outline:none;user-select:text;-webkit-user-select:text}
+textarea{height:300px;margin-top:8px;font-family:monospace;font-size:12px;line-height:1.5;color:#A7F3D0;resize:none}
+textarea[readonly]{color:#93C5FD}
+.lbl{font-size:12px;color:var(--sub);margin-bottom:6px}
+.note{font-size:11.5px;color:var(--sub);margin-top:8px;line-height:1.5}
+.gap{margin-top:8px}
+pre{font-size:11.5px;color:#A7F3D0;line-height:1.6;white-space:pre-wrap;font-family:monospace}
+</style>
+</head>
+<body>
+<h1>UwaaMacro</h1>
+<div class="sub">Auto clicker + editor visual + skrip Lua. Visual dan Lua selalu sinkron.</div>
+
+<div class="card">
+  <div class="chips" id="chips"></div>
+  <div class="row">
+    <button onclick="B.openAccessibility()">Pengaturan Aksesibilitas</button>
+    <button class="ac" onclick="B.launch()">Jalankan HUD</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="lbl">Skrip (ketuk untuk membuka, Aktifkan untuk dipakai HUD)</div>
+  <div id="list"></div>
+  <div class="row">
+    <button onclick="newScript('visual')">+ Visual</button>
+    <button onclick="newScript('lua')">+ Lua</button>
+  </div>
+</div>
+
+<div class="card">
+  <input id="nm" placeholder="Nama skrip" oninput="dirty=true">
+  <div id="loopBox" class="gap">
+    <div class="lbl">Jumlah putaran (0 = tak terbatas)</div>
+    <input id="loop" type="number" min="0" value="0" oninput="onLoop()">
+  </div>
+  <textarea id="cd" spellcheck="false" oninput="dirty=true"></textarea>
+  <div class="note" id="note"></div>
+  <div class="row">
+    <button class="bad" onclick="del()">Hapus</button>
+    <button onclick="activate()">Aktifkan</button>
+    <button class="ac" onclick="save()">Simpan</button>
+  </div>
+  <div class="row" id="convRow"><button onclick="toLua()">Ubah ke Lua (lepas dari editor visual)</button></div>
+</div>
+
+<div class="card">
+  <div class="lbl">Fungsi Lua yang tersedia</div>
+<pre>running()                  true selama skrip jalan
+sleep(ms)                  jeda
+tap(x, y, tahan, jitter)   klik
+swipe(x1,y1,x2,y2,ms)      geser
+screen()                   lebar, tinggi layar
+status(teks)               teks di HUD
+findImage(nama, 0.85)      x, y atau nil
+saveTemplate(nama,x,y,w,h) simpan potongan layar
+stickDown(x,y) stickMove(x,y) stickUp()
+toast(teks)  rand(min,max)</pre>
+</div>
+
+<script>
+var B = window.AppBridge, scripts = [], active = 0, cur = 0, dirty = false, lastRaw = "";
+
+function $(id){ return document.getElementById(id); }
+function isVisual(s){ return s && s.mode === "visual"; }
+
+function load(){
+  lastRaw = B.getScripts();
+  try { scripts = JSON.parse(lastRaw); } catch(e){ scripts = []; }
+  active = B.getActive();
+  if (cur >= scripts.length) cur = Math.max(0, scripts.length - 1);
+  dirty = false;
+  renderList(); loadEditor();
+}
+
+function persist(){
+  B.saveScripts(JSON.stringify(scripts), active);
+  lastRaw = B.getScripts();
+}
+
+function compiled(s){ return B.compile(JSON.stringify(s.actions || []), s.loop || 0); }
+
+function renderList(){
+  var box = $("list"); box.innerHTML = "";
+  scripts.forEach(function(s, i){
+    var d = document.createElement("div");
+    d.className = "item" + (i === cur ? " sel" : "");
+    var n = document.createElement("div"); n.className = "nm"; n.textContent = s.name;
+    d.appendChild(n);
+    var m = document.createElement("div"); m.className = "tag m"; m.textContent = isVisual(s) ? "VISUAL" : "LUA"; d.appendChild(m);
+    if (i === active){ var t = document.createElement("div"); t.className = "tag"; t.textContent = "AKTIF"; d.appendChild(t); }
+    d.onclick = function(){ if (dirty && !confirm("Perubahan belum disimpan akan hilang. Lanjut?")) return; cur = i; dirty = false; renderList(); loadEditor(); };
+    box.appendChild(d);
+  });
+}
+
+function loadEditor(){
+  var s = scripts[cur], v = isVisual(s);
+  $("nm").value = s ? s.name : "";
+  $("loop").value = s && s.loop ? s.loop : 0;
+  $("loopBox").style.display = v ? "block" : "none";
+  $("convRow").style.display = v ? "flex" : "none";
+  var cd = $("cd");
+  cd.readOnly = v;
+  cd.value = s ? (v ? compiled(s) : (s.code || "")) : "";
+  $("note").textContent = v
+    ? "Kode ini dibuat otomatis dari penanda di HUD. Tambah, geser, atau ubah aksi lewat HUD; halaman ini ikut berubah."
+    : "Skrip Lua dijalankan apa adanya dan tidak punya penanda.";
+}
+
+function onLoop(){
+  dirty = true;
+  var s = scripts[cur];
+  if (isVisual(s)) { s.loop = parseInt($("loop").value) || 0; $("cd").value = compiled(s); }
+}
+
+function save(){
+  var s = scripts[cur];
+  if (!s) return;
+  s.name = $("nm").value || "Skrip";
+  if (isVisual(s)) {
+    s.loop = parseInt($("loop").value) || 0;
+    s.code = compiled(s);
+  } else {
+    s.code = $("cd").value;
+  }
+  dirty = false; persist(); renderList(); loadEditor();
+}
+
+function newScript(mode){
+  if (mode === "visual") {
+    scripts.push({name: "Visual baru", mode: "visual", loop: 0, actions: [], code: B.compile("[]", 0)});
+  } else {
+    scripts.push({name: "Skrip baru.lua", mode: "lua", loop: 0, code: "while running() do\n  sleep(500)\nend\n"});
+  }
+  cur = scripts.length - 1; dirty = false; persist(); renderList(); loadEditor();
+}
+
+function toLua(){
+  var s = scripts[cur];
+  if (!isVisual(s) || !confirm("Setelah diubah ke Lua, skrip tidak bisa diedit lewat penanda lagi. Lanjut?")) return;
+  s.code = compiled(s); s.mode = "lua"; delete s.actions;
+  dirty = false; persist(); renderList(); loadEditor();
+}
+
+function del(){
+  if (!scripts[cur] || !confirm("Hapus skrip ini?")) return;
+  scripts.splice(cur, 1);
+  if (active >= scripts.length) active = Math.max(0, scripts.length - 1);
+  cur = Math.min(cur, Math.max(0, scripts.length - 1));
+  dirty = false; persist(); renderList(); loadEditor();
+}
+
+function activate(){ save(); active = cur; persist(); renderList(); }
+
+function chip(text, ok){
+  var c = document.createElement("div");
+  c.className = "chip " + (ok ? "ok" : "bad"); c.textContent = text; return c;
+}
+
+function poll(){
+  try {
+    var s = JSON.parse(B.status()), box = $("chips"); box.innerHTML = "";
+    box.appendChild(chip(s.connected ? "Layanan aksesibilitas terhubung" : (s.acc ? "Layanan aktif, menunggu koneksi" : "Layanan aksesibilitas MATI"), s.connected));
+    box.appendChild(chip(s.lua ? "Mesin Lua siap" : "LuaJ belum dipasang", s.lua));
+    box.appendChild(chip(s.api >= 30 ? "Screenshot tersedia" : "Screenshot butuh Android 11+", s.api >= 30));
+    box.appendChild(chip(s.api >= 26 ? "Joystick tahan-jari tersedia" : "Joystick butuh Android 8+", s.api >= 26));
+    box.appendChild(chip(s.running ? "Skrip berjalan" : "Skrip berhenti", s.running));
+    // sinkron: ambil perubahan dari HUD bila tidak ada edit yang tertunda
+    if (!dirty && B.getScripts() !== lastRaw) load();
+  } catch(e){}
+}
+
+load(); poll(); setInterval(poll, 1200);
+</script>
+</body>
+</html>
